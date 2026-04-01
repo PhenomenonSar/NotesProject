@@ -1,4 +1,4 @@
-# PUT /notes/{id} — Update Note Content
+# PATCH /notes/{id} — Update Note Content
 
 ## Description
 

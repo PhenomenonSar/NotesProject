@@ -92,7 +92,7 @@ curl http://localhost:8080/notes \
   -H "Authorization: Bearer $TOKEN"
 
 # Update note data
-curl -X PUT http://localhost:8080/notes/1 \
+curl -X PATCH http://localhost:8080/notes/1 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"data":{"rating":9,"comment":"Improved finishing"}}'
@@ -160,7 +160,7 @@ pom.xml
 - [ ] `POST /notes` with same `uniqCode` again → 409
 - [ ] `POST /notes` with `data` that is a JSON array → 422
 - [ ] `GET /notes` → 200 with the created note, ordered by `noteTimestamp` DESC
-- [ ] `PUT /notes/1` with new `data` → 200, `noteTimestamp` and `noteEOLTimestamp` unchanged
+- [ ] `PATCH /notes/1` with new `data` → 200, `noteTimestamp` and `noteEOLTimestamp` unchanged
 - [ ] `POST /notes/1/extend` → 200, `noteEOLTimestamp` ≈ now + 2592000
 - [ ] `DELETE /notes/{id}` → 204, note gone from list
 - [ ] `DELETE /notes` → 204, list empty
