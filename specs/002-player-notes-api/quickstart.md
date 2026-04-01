@@ -54,6 +54,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+    # H2 does not support JSONB — 'data' column uses TEXT in dev profile
 ```
 
 ### Production profile (`application-prod.yml`)
@@ -84,24 +85,24 @@ TOKEN="<your.jwt.here>"
 curl -X POST http://localhost:8080/notes \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"uniqCode":"player-123","content":{"rating":8,"comment":"Strong left foot"}}'
+  -d '{"uniqCode":"player-123","data":{"rating":8,"comment":"Strong left foot"}}'
 
-# List notes
+# List notes (returns array ordered by noteTimestamp DESC)
 curl http://localhost:8080/notes \
   -H "Authorization: Bearer $TOKEN"
 
-# Update note content
-curl -X PUT http://localhost:8080/notes/{id} \
+# Update note data
+curl -X PUT http://localhost:8080/notes/1 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"content":{"rating":9,"comment":"Improved finishing"}}'
+  -d '{"data":{"rating":9,"comment":"Improved finishing"}}'
 
 # Extend note lifetime (+30 days from now)
 curl -X POST http://localhost:8080/notes/{id}/extend \
   -H "Authorization: Bearer $TOKEN"
 
 # Delete a single note
-curl -X DELETE http://localhost:8080/notes/{id} \
+curl -X DELETE http://localhost:8080/notes/1 \
   -H "Authorization: Bearer $TOKEN"
 
 # Delete all notes
@@ -155,12 +156,12 @@ pom.xml
 ## Validation Checklist (manual smoke test)
 
 - [ ] `POST /notes` with no token → 401
-- [ ] `POST /notes` with valid token and `{"uniqCode":"p1","content":{}}` → 201
+- [ ] `POST /notes` with valid token and `{"uniqCode":"p1","data":{}}` → 201, response has `id`, `userId`, `noteTimestamp`, `noteEOLTimestamp`, `data`
 - [ ] `POST /notes` with same `uniqCode` again → 409
-- [ ] `POST /notes` with content that is a JSON array → 422
-- [ ] `GET /notes` → 200 with the created note, newest first
-- [ ] `PUT /notes/{id}` with new content → 200, `updatedAt` changed, `expiresAt` unchanged
-- [ ] `POST /notes/{id}/extend` → 200, `expiresAt` ≈ now + 30 days
+- [ ] `POST /notes` with `data` that is a JSON array → 422
+- [ ] `GET /notes` → 200 with the created note, ordered by `noteTimestamp` DESC
+- [ ] `PUT /notes/1` with new `data` → 200, `noteTimestamp` and `noteEOLTimestamp` unchanged
+- [ ] `POST /notes/1/extend` → 200, `noteEOLTimestamp` ≈ now + 2592000
 - [ ] `DELETE /notes/{id}` → 204, note gone from list
 - [ ] `DELETE /notes` → 204, list empty
 - [ ] `GET /actuator/health` → 200 `{"status":"UP"}`

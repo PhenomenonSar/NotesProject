@@ -25,8 +25,8 @@ subsequent list for that session.
 
 1. **Given** an authorized client with fewer than 100 active notes, **When** they submit a
    note with a valid `uniqCode` and valid JSON object content, **Then** the service returns
-   HTTP 201 with the created note including its ID, `expiresAt` (30 days from now), and
-   timestamps.
+   HTTP 201 with the created note including `id`, `noteTimestamp`, and
+   `noteEOLTimestamp` (= `noteTimestamp + 2592000`).
 2. **Given** an authorized client, **When** they submit a note with an empty JSON object `{}`
    as content, **Then** the service accepts it and returns HTTP 201.
 3. **Given** an authorized client who already has an active note for a given player (`uniqCode`),
@@ -60,7 +60,7 @@ list contains only its own non-expired notes.
 
 1. **Given** an authorized client with active notes, **When** they request the list, **Then**
    the service returns HTTP 200 with all active notes belonging to that session only,
-   ordered by `createdAt` descending (newest first).
+   ordered by `noteTimestamp` descending (newest first).
 2. **Given** two sessions each with their own notes, **When** session A requests its list,
    **Then** no notes from session B appear.
 3. **Given** an authorized client with no active notes yet, **When** they request the list,
@@ -87,8 +87,8 @@ and the note still appears in the list with the same ID and original expiry.
 **Acceptance Scenarios**:
 
 1. **Given** an authorized client with an existing active note, **When** they submit updated
-   JSON object content, **Then** the service returns HTTP 200 with the updated note and a
-   refreshed `updatedAt` timestamp (expiry unchanged).
+   JSON object content, **Then** the service returns HTTP 200 with the updated note
+   (`noteTimestamp` and `noteEOLTimestamp` unchanged, `data` replaced).
 2. **Given** an authorized client, **When** they attempt to update a note belonging to a
    different session, **Then** the service returns HTTP 404.
 3. **Given** an authorized client, **When** they attempt to update a note that does not
@@ -156,16 +156,15 @@ from the current moment. This operation can be performed an unlimited number of 
 **Why this priority**: Lifetime management is a secondary lifecycle-maintenance operation.
 Core CRUD must be complete and stable before expiry extension becomes useful.
 
-**Independent Test**: Create a note, record its `expiresAt`, call extend, verify the new
-`expiresAt` is 30 days from the time of the extend call (not from the original expiry).
+**Independent Test**: Create a note, record its `noteEOLTimestamp`, call extend, verify the
+new `noteEOLTimestamp` is approximately `now + 2592000` seconds (not from the original value).
 
 **Acceptance Scenarios**:
 
 1. **Given** an authorized client with an active note, **When** they call extend on it,
-   **Then** the service returns HTTP 200 with `expiresAt` set to 30 days from the current
-   moment.
+   **Then** the service returns HTTP 200 with `noteEOLTimestamp` set to `now + 2592000` seconds.
 2. **Given** an authorized client, **When** they extend the same note multiple times,
-   **Then** each extension resets `expiresAt` to 30 days from the most recent call.
+   **Then** each extension resets `noteEOLTimestamp` to 30 days from the most recent call.
 3. **Given** an authorized client, **When** they attempt to extend a note belonging to a
    different session, **Then** the service returns HTTP 404.
 4. **Given** an authorized client, **When** they attempt to extend an already-expired note,
@@ -206,8 +205,8 @@ Core CRUD must be complete and stable before expiry extension becomes useful.
 - **FR-004**: The service MUST persist each note with an expiry timestamp set to exactly 30
   days after creation.
 - **FR-005**: The service MUST return the complete list of active (non-expired) notes for the
-  requesting session, ordered by `createdAt` descending (newest first). The response MUST NOT
-  include notes from other sessions or expired notes.
+  requesting session, ordered by `noteTimestamp` descending (newest first). The response MUST
+  NOT include notes from other sessions or expired notes.
 - **FR-006**: The service MUST allow an authorized client to replace the content of an active
   note they own without changing its expiry timestamp. `uniqCode` is immutable and MUST NOT
   be modifiable after creation.
@@ -233,12 +232,15 @@ Core CRUD must be complete and stable before expiry extension becomes useful.
 
 ### Key Entities
 
-- **Note**: The primary entity. Attributes: unique system identifier, session owner identity
-  (derived from token), `uniqCode` (external player identifier provided by client — immutable
-  after creation), content (JSON object, max 10 KB), creation timestamp, last-updated
-  timestamp, expiry timestamp.
-- **Session**: Represents the authenticated caller identity. Derived from the incoming
-  authorization token on each request; not persisted by this service.
+- **Note**: The primary entity. Fields:
+  - `id` — auto-generated integer identifier
+  - `userId` — integer identity of the caller, derived from the JWT `sub` claim
+  - `uniqCode` — external player identifier (string); immutable after creation
+  - `data` — arbitrary JSON object supplied by the client (max 10 KB); stored as JSONB
+  - `noteTimestamp` — Unix timestamp (seconds) of note creation
+  - `noteEOLTimestamp` — Unix timestamp (seconds) when the note expires (`noteTimestamp + 30 days`)
+- **Session**: Represents the authenticated caller identity (`userId`). Derived from the
+  incoming JWT on each request; not persisted by this service.
 
 ## Success Criteria *(mandatory)*
 
@@ -268,7 +270,7 @@ Core CRUD must be complete and stable before expiry extension becomes useful.
 
 - Q: How does the service validate Bearer tokens? → A: JWT — service validates the token locally using a shared secret or public key (no outbound auth call per request).
 - Q: How are expired notes handled in storage? → A: Hybrid — expired notes are filtered out on every read query (lazy); a background scheduled job periodically purges them for storage hygiene.
-- Q: In what order should the note list be returned? → A: `createdAt` descending — newest note first.
+- Q: In what order should the note list be returned? → A: `noteTimestamp` descending — newest note first.
 - Q: Is `uniqCode` immutable after note creation? → A: Yes — `uniqCode` cannot be changed after creation; only note content is updatable.
 - Q: Should the service apply per-session rate limiting beyond the 100-note cap? → A: No — the 100-note cap is the only throttle; no additional rate limiting in v1.
 
@@ -280,12 +282,11 @@ Core CRUD must be complete and stable before expiry extension becomes useful.
   request. Token issuance is handled by an external identity or auth service.
 - A "session" maps to a stable, unique identity derived from the validated token (e.g., a
   user ID or client ID embedded in the token payload).
-- An "active note" is a note whose `expiresAt` is in the future. Expired notes are excluded
-  from all read and mutation operations and are treated as non-existent by the API. Expired
-  notes remain in storage until removed by a background scheduled cleanup job; they are
-  filtered out on every read query (lazy expiry check).
-- Extending a note's lifetime always resets `expiresAt` to exactly 30 days from the moment
-  of the extend call — not from the current `expiresAt` value.
+- An "active note" is a note whose `noteEOLTimestamp` is greater than the current Unix time.
+  Expired notes are excluded from all read and mutation operations and treated as non-existent
+  by the API. They remain in storage until purged by the background cleanup job.
+- Extending a note's lifetime always resets `noteEOLTimestamp` to `now + 2592000` seconds —
+  not from the current `noteEOLTimestamp` value.
 - The uniqueness constraint (session + `uniqCode`) applies only to active notes; after a
   note is deleted or expires, the same `uniqCode` can be used for a new note.
 - `uniqCode` is a non-blank string provided by the external client. Its format and meaning
